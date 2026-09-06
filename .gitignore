@@ -1,0 +1,21 @@
+# Pebble app build output
+pebble-uta/build/
+pebble-uta/.lock-waf*
+*.pbw
+
+# .NET proxy build output
+proxy/bin/
+proxy/obj/
+proxy/publish/
+**/logs/
+*.user
+
+# Editor / IDE
+.idea/
+
+# Node
+node_modules/
+
+# Stray screenshots at the repo root (keep resources/**/*.png)
+/*.png
+pebble_screenshot_*.png

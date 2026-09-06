@@ -1,0 +1,66 @@
+{
+  "name": "pebble-uta",
+  "author": "jwebstas",
+  "version": "1.0.0",
+  "keywords": ["pebble-app"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "UTA Transit",
+    "uuid": "a8490ce9-f611-4d1c-a5b4-4114d6807702",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "capabilities": ["location", "configurable"],
+    "targetPlatforms": [
+      "basalt",
+      "chalk",
+      "diorite",
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "FETCH",
+      "COUNT",
+      "IDX",
+      "STOP_NAME",
+      "STOP_ID",
+      "ROUTE",
+      "HEADSIGN",
+      "MINUTES",
+      "DEP",
+      "WALK",
+      "DELAY",
+      "COLOR",
+      "FLAGS",
+      "SECTION",
+      "TRIP_ID",
+      "SAVE_FAV",
+      "DEL_FAV",
+      "FAV_NAME",
+      "FAV_ROUTE",
+      "STATUS",
+      "A_COUNT",
+      "A_IDX",
+      "A_HEAD",
+      "A_BODY",
+      "DETAIL_REQ",
+      "D_TRIP",
+      "D_STOP",
+      "D_SEQ",
+      "D_LAST",
+      "D_TEXT"
+    ],
+    "resources": {
+      "media": [
+        {
+          "type": "png",
+          "name": "IMAGE_MENU_ICON",
+          "file": "images/menu_icon.png",
+          "menuIcon": true
+        }
+      ]
+    }
+  }
+}
