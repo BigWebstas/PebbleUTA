@@ -106,8 +106,18 @@ function sendRows(rows) {
   });
 }
 
-// Launcher glance subtext: the soonest pinned departure, as a live countdown.
-// rows are already sorted by minutes, so the first favorite is the next one.
+// Wall-clock time of a unix epoch, phone-local, e.g. "2:45p".
+function clockTime(epochS) {
+  var d = new Date(epochS * 1000);
+  var h = d.getHours();
+  var h12 = h % 12 || 12;
+  var mm = ('0' + d.getMinutes()).slice(-2);
+  return h12 + ':' + mm + (h < 12 ? 'a' : 'p');
+}
+
+// Launcher glance subtext: the soonest pinned departure -- its arrival clock
+// time plus a live countdown. rows are sorted by minutes, so the first
+// favorite is the next one.
 function updateGlance(rows) {
   var fav = null;
   for (var i = 0; i < rows.length; i++) {
@@ -126,14 +136,13 @@ function updateGlance(rows) {
 
   var nowS = Math.round(Date.now() / 1000);
   var epoch = fav.dep_epoch || (nowS + (fav.minutes || 0) * 60);
-
   var label = fav.route || 'Route';
-  if ((label + ' ' + (fav.headsign || '')).length <= 18 && fav.headsign) {
-    label += ' ' + fav.headsign;
-  }
 
   var slice = {
-    layout: { subtitleTemplateString: label + '  {time_until(' + epoch + ')}' },
+    layout: {
+      subtitleTemplateString:
+        label + ' at ' + clockTime(epoch) + '  {time_until(' + epoch + ')}'
+    },
     expirationTime: new Date((epoch + 180) * 1000).toISOString()
   };
   log('glance: ' + slice.layout.subtitleTemplateString);
@@ -208,8 +217,9 @@ function collectDepartures(settings, lat, lon) {
 
   function finish() {
     var rows = FMT.buildRows(results, favKeys, Date.now(), settings.walk_pace);
+    var nf = rows.filter(function (r) { return r.section === 1; }).length;
     log('finish: ' + results.length + ' stops -> ' + rows.length + ' rows, ' +
-        alerts.length + ' alerts');
+        alerts.length + ' alerts, ' + nf + ' fav');
     if (!rows.length && nearbyError) {
       busy = false;   // leave the proxy-error status on screen
       return;
@@ -219,8 +229,12 @@ function collectDepartures(settings, lat, lon) {
     updateGlance(rows);
   }
 
+  // Fetch every favorite stop, even one the nearby query already returned: the
+  // proxy caps departures per stop, so a favorite route that is far out can be
+  // missing from the nearby response. These rows are added on top of the
+  // nearby ones (buildRows de-dupes exact repeats).
   function fetchFavorites() {
-    var stopIds = Object.keys(favByStop).filter(function (sid) { return !have[sid]; });
+    var stopIds = Object.keys(favByStop);
     if (!stopIds.length) { finish(); return; }
     var left = stopIds.length;
     stopIds.forEach(function (sid) {
@@ -228,7 +242,20 @@ function collectDepartures(settings, lat, lon) {
         if (err) {
           log('favorite ' + sid + ': ' + err.message);
         } else if (res && res.stops && res.stops[0]) {
-          addStop(res.stops[0], false, favByStop[sid]);
+          var st = res.stops[0];
+          var filter = favByStop[sid];
+          var deps = (st.departures || []).filter(function (d) {
+            return filter[d.route || d.route_long || ''];
+          });
+          if (deps.length) {
+            results.push({
+              stop_id: st.stop_id,
+              name: st.name || '',
+              distance_m: (st.distance_m != null) ? st.distance_m : null,
+              from_nearby: false,
+              departures: deps
+            });
+          }
           addAlerts(res.alerts);
         }
         if (--left === 0) { finish(); }

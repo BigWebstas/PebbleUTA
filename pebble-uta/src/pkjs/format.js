@@ -2,6 +2,7 @@
  * rows ready to stream to the watch. */
 
 var MAX_ROWS = 15;
+var MAX_FAV_ROWS = 10;       // reserve the rest of MAX_ROWS for nearby
 var DEFAULT_WALK_MPM = 80;   // metres per minute, ~4.8 km/h
 
 /* stopResults: [{ stop_id, name, distance_m, departures: [proxy departure] }]
@@ -36,9 +37,9 @@ function buildRows(stopResults, favKeys, nowMs, walkPace) {
       seen[key] = true;
 
       rows.push({
-        // A favorited stop stays under Nearby (with a * marker) while it is in
-        // range; the Favorites section is for pinned stops you have left.
-        section: (isFav && !sr.from_nearby) ? 1 : 0,
+        // Every favorite goes in the pinned Favorites section at the top,
+        // in range or not; other routes at the same stop stay under Nearby.
+        section: isFav ? 1 : 0,
         stop_id: sr.stop_id,
         stop_name: sr.name || '',
         trip_id: d.trip_id || '',
@@ -62,7 +63,13 @@ function buildRows(stopResults, favKeys, nowMs, walkPace) {
     return a.route < b.route ? -1 : 1;
   });
 
-  return rows.slice(0, MAX_ROWS);
+  // Favorites (section 1) are never dropped by the row cap, even when their
+  // next departure is far out; nearby departures fill the remaining slots.
+  var fav = [];
+  var near = [];
+  rows.forEach(function (r) { (r.section === 1 ? fav : near).push(r); });
+  fav = fav.slice(0, MAX_FAV_ROWS);
+  return fav.concat(near.slice(0, MAX_ROWS - fav.length));
 }
 
 module.exports = { buildRows: buildRows };

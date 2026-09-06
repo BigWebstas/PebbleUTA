@@ -475,9 +475,11 @@ static void menu_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, voi
                      GRect(x, b.origin.y + 21, w, 20),
                      GTextOverflowModeTrailingEllipsis, al, NULL);
 
+  // The Favorites section is all favorites, so only mark one that shows up
+  // elsewhere (shouldn't happen today, but keeps the cue if that changes).
   char sname[DEP_STOPNAME_LEN + 4];
-  snprintf(sname, sizeof(sname), "%s%s",
-           (d->flags & DEP_FLAG_FAVORITE) ? "* " : "", d->stop_name);
+  bool mark = (d->flags & DEP_FLAG_FAVORITE) && kind != KIND_FAVORITE;
+  snprintf(sname, sizeof(sname), "%s%s", mark ? "* " : "", d->stop_name);
   graphics_draw_text(gctx, sname, fonts_get_system_font(FONT_KEY_GOTHIC_14),
                      GRect(x, b.origin.y + 41, w, 18),
                      GTextOverflowModeTrailingEllipsis, al, NULL);
