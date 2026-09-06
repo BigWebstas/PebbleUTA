@@ -16,6 +16,9 @@ proxy/publish/
 # Node
 node_modules/
 
+# Local agent guidance
+CLAUDE.md
+
 # Stray screenshots at the repo root (keep resources/**/*.png)
 /*.png
 pebble_screenshot_*.png
