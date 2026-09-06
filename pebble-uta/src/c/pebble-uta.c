@@ -75,15 +75,14 @@ static void human_ago(int secs, char *out, size_t len) {
 }
 
 static void update_freshness(void) {
-  if (!s_have_data || s_data_time == 0) {
+  // While offline the pinned banner carries the state, so keep the strip clear.
+  if (!s_have_data || s_data_time == 0 || s_offline) {
     s_fresh_txt[0] = '\0';
   } else {
     int age = (int)(time(NULL) - s_data_time);
-    char ago[16];
-    human_ago(age, ago, sizeof(ago));
-    if (s_offline) {
-      snprintf(s_fresh_txt, sizeof(s_fresh_txt), "offline - %s", ago);
-    } else if (age >= 90) {
+    if (age >= 90) {
+      char ago[16];
+      human_ago(age, ago, sizeof(ago));
       snprintf(s_fresh_txt, sizeof(s_fresh_txt), "%s", ago);
     } else {
       s_fresh_txt[0] = '\0';
@@ -113,18 +112,26 @@ static void send_simple(uint32_t key, const char *value) {
 
 static time_t s_last_fetch;
 
-static void request_fetch(void) {
+// quiet=true keeps the current rows on screen (used for the 5-minute auto
+// refresh); quiet=false shows "Loading..." for a user-driven refresh.
+static void do_fetch(bool quiet) {
   time_t now = time(NULL);
   if (now - s_last_fetch < 15) {
     return;   // debounce: accel taps and quick clicks must not spam the phone
   }
   s_last_fetch = now;
-  snprintf(s_status, sizeof(s_status), "%s", "Loading...");
-  s_have_data = false;
-  if (s_menu) {
-    menu_layer_reload_data(s_menu);
+  if (!quiet) {
+    snprintf(s_status, sizeof(s_status), "%s", "Loading...");
+    s_have_data = false;
+    if (s_menu) {
+      menu_layer_reload_data(s_menu);
+    }
   }
   send_simple(MESSAGE_KEY_FETCH, NULL);
+}
+
+static void request_fetch(void) {
+  do_fetch(false);
 }
 
 static int32_t tuple_int(const Tuple *t) {
@@ -207,14 +214,22 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
   Tuple *status_t = dict_find(iter, MESSAGE_KEY_STATUS);
   if (status_t && status_t->type == TUPLE_CSTRING) {
     snprintf(s_status, sizeof(s_status), "%s", status_t->value->cstring);
-    // Keep any existing rows on screen during a refresh; the next batch
-    // replaces them atomically when its IDX 0 arrives.
-    if (departures_received() == 0) {
-      s_have_data = false;
+
+    if (strstr(s_status, "unreachable") || strstr(s_status, "timeout") ||
+        strstr(s_status, "starting up")) {
+      s_offline = true;   // keep the cached rows on screen, just flag them
+    } else if (strstr(s_status, "No departures")) {
+      // The proxy answered; there is simply nothing to show.
+      s_offline = false;
+      departures_clear();
+      s_data_time = time(NULL);
+      cache_save();
     }
-    if (strstr(s_status, "unreachable") || strstr(s_status, "timeout")) {
-      s_offline = true;   // keep the cached rows, just mark them stale
-    }
+
+    // Keep existing rows visible during a refresh; a real batch replaces them
+    // atomically on its IDX 0. Only blank when we have nothing at all.
+    s_have_data = (departures_received() > 0) || strstr(s_status, "No departures");
+
     update_freshness();
     schedule_reload();
     return;
@@ -230,6 +245,7 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
   uint8_t count = (uint8_t)tuple_int(count_t);
   if (idx == 0) {
     departures_clear();
+    s_offline = false;   // a batch is arriving, so the proxy was reached
   }
   departures_set_expected(count);
 
@@ -251,7 +267,9 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
   departures_put(idx, &d);
   s_have_data = true;
 
-  if (departures_complete()) {
+  // Finalise on the last row of the batch even if an earlier one was dropped,
+  // so a lost AppMessage can't leave the app stuck "offline".
+  if (departures_complete() || idx + 1 >= count) {
     s_data_time = time(NULL);
     s_offline = false;
     cache_save();
@@ -268,15 +286,26 @@ static void inbox_dropped(AppMessageResult reason, void *context) {
 // Menu
 // ---------------------------------------------------------------------------
 
-enum { KIND_ALERTS, KIND_NEARBY, KIND_FAVORITE };
+enum { KIND_STATUS, KIND_ALERTS, KIND_NEARBY, KIND_FAVORITE };
 
 static uint8_t fav_count(void) {
   return departures_section_count(SECTION_FAVORITE);
 }
 
-// Section order: Alerts (if any), Favorites (if any), Nearby (always).
+// The offline banner is a pinned one-row section at the very top: tap it to
+// force a refresh.
+static bool status_banner_shown(void) {
+  return s_offline;
+}
+
+// Section order: Offline banner (if offline), Alerts (if any), Favorites (if
+// any), Nearby (always).
 static int section_kind(uint16_t s) {
   uint16_t i = 0;
+  if (status_banner_shown()) {
+    if (s == i) { return KIND_STATUS; }
+    i++;
+  }
   if (alerts_count() > 0) {
     if (s == i) { return KIND_ALERTS; }
     i++;
@@ -293,11 +322,16 @@ static uint8_t dep_section_for(int kind) {
 }
 
 static uint16_t menu_get_num_sections(MenuLayer *menu, void *ctx) {
-  return 1 + (alerts_count() > 0 ? 1 : 0) + (fav_count() > 0 ? 1 : 0);
+  return 1 + (status_banner_shown() ? 1 : 0)
+           + (alerts_count() > 0 ? 1 : 0)
+           + (fav_count() > 0 ? 1 : 0);
 }
 
 static uint16_t menu_get_num_rows(MenuLayer *menu, uint16_t section, void *ctx) {
   int kind = section_kind(section);
+  if (kind == KIND_STATUS) {
+    return 1;
+  }
   if (kind == KIND_ALERTS) {
     return alerts_count();
   }
@@ -309,19 +343,21 @@ static uint16_t menu_get_num_rows(MenuLayer *menu, uint16_t section, void *ctx) 
 }
 
 static int16_t menu_get_header_height(MenuLayer *menu, uint16_t section, void *ctx) {
-  return MENU_CELL_BASIC_HEADER_HEIGHT;
+  return section_kind(section) == KIND_STATUS ? 0 : MENU_CELL_BASIC_HEADER_HEIGHT;
 }
 
 static int16_t menu_get_cell_height(MenuLayer *menu, MenuIndex *idx, void *ctx) {
-  if (section_kind(idx->section) == KIND_ALERTS) {
-    return 54;
+  switch (section_kind(idx->section)) {
+    case KIND_STATUS: return 46;
+    case KIND_ALERTS: return 54;
+    default: return PBL_IF_ROUND_ELSE(64, 62);
   }
-  return PBL_IF_ROUND_ELSE(64, 62);
 }
 
 static void menu_draw_header(GContext *gctx, const Layer *cell, uint16_t section, void *ctx) {
   const char *t = "Nearby";
   switch (section_kind(section)) {
+    case KIND_STATUS: return;   // no header
     case KIND_ALERTS: t = "Alerts"; break;
     case KIND_FAVORITE: t = "Favorites"; break;
     default: t = "Nearby"; break;
@@ -331,6 +367,31 @@ static void menu_draw_header(GContext *gctx, const Layer *cell, uint16_t section
 
 static void menu_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, void *ctx) {
   int kind = section_kind(idx->section);
+
+  if (kind == KIND_STATUS) {
+    GRect b = layer_get_bounds(cell);
+    graphics_context_set_fill_color(
+        gctx, PBL_IF_COLOR_ELSE(GColorDarkCandyAppleRed, GColorBlack));
+    graphics_fill_rect(gctx, b, 0, GCornerNone);
+    graphics_context_set_text_color(gctx, GColorWhite);
+
+    char l2[64];
+    if (s_have_data && s_data_time) {
+      char ago[16];
+      human_ago((int)(time(NULL) - s_data_time), ago, sizeof(ago));
+      snprintf(l2, sizeof(l2), "data %s", ago);
+    } else {
+      snprintf(l2, sizeof(l2), "%s", s_status);
+    }
+    graphics_draw_text(gctx, "Offline - SELECT to retry",
+                       fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
+                       GRect(b.origin.x + 5, b.origin.y + 2, b.size.w - 10, 22),
+                       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    graphics_draw_text(gctx, l2, fonts_get_system_font(FONT_KEY_GOTHIC_14),
+                       GRect(b.origin.x + 5, b.origin.y + 24, b.size.w - 10, 18),
+                       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+    return;
+  }
 
   if (kind == KIND_ALERTS) {
     const Alert *a = alerts_get((uint8_t)idx->row);
@@ -424,7 +485,7 @@ static void menu_draw_row(GContext *gctx, const Layer *cell, MenuIndex *idx, voi
 
 static void menu_select_long(MenuLayer *menu, MenuIndex *idx, void *ctx) {
   int kind = section_kind(idx->section);
-  if (kind == KIND_ALERTS) {
+  if (kind == KIND_ALERTS || kind == KIND_STATUS) {
     return;
   }
   const Departure *cd =
@@ -461,6 +522,12 @@ static void menu_select_long(MenuLayer *menu, MenuIndex *idx, void *ctx) {
 static void menu_select(MenuLayer *menu, MenuIndex *idx, void *ctx) {
   int kind = section_kind(idx->section);
 
+  if (kind == KIND_STATUS) {
+    vibes_short_pulse();
+    do_fetch(false);
+    return;
+  }
+
   if (kind == KIND_ALERTS) {
     const Alert *a = alerts_get((uint8_t)idx->row);
     if (a) {
@@ -495,6 +562,70 @@ static void accel_tap(AccelAxisType axis, int32_t direction) {
   }
   request_fetch();
 }
+
+// Auto-refresh the list this many seconds after the last good batch, and no
+// more often than this while it keeps failing.
+#define AUTO_REFRESH_SECS 300
+#define AUTO_REFRESH_RETRY 120
+
+static void maybe_auto_refresh(void) {
+  if (detail_is_open()) {
+    return;
+  }
+  time_t now = time(NULL);
+  bool stale = s_have_data && s_data_time != 0 &&
+               now - s_data_time >= AUTO_REFRESH_SECS;
+  // Retry on a schedule when the data is old OR the last attempt failed.
+  if ((stale || s_offline) && now - s_last_fetch >= AUTO_REFRESH_RETRY) {
+    do_fetch(true);   // quiet: keep the current rows visible
+  }
+}
+
+#if defined(PBL_PLATFORM_EMERY)
+// Pull-to-refresh: a downward drag that starts at the top of the list fires a
+// refresh on liftoff. The touch-navigation bridge still scrolls the list; at
+// the top a downward drag scrolls nothing, so the two do not fight.
+#define PULL_TRIGGER_PX 44
+
+static int16_t s_pull_y0;
+static bool s_pull_active;
+static bool s_pull_armed;
+
+static bool list_at_top(void) {
+  if (!s_menu) {
+    return false;
+  }
+  MenuIndex i = menu_layer_get_selected_index(s_menu);
+  return i.section == 0 && i.row == 0;
+}
+
+static void touch_handler(const TouchEvent *e, void *ctx) {
+  if (detail_is_open() || e->non_navigational) {
+    return;
+  }
+  switch (e->type) {
+    case TouchEvent_Touchdown:
+      s_pull_y0 = e->y;
+      s_pull_active = list_at_top();
+      s_pull_armed = false;
+      break;
+    case TouchEvent_PositionUpdate:
+      if (s_pull_active && !s_pull_armed &&
+          (e->y - s_pull_y0) > PULL_TRIGGER_PX) {
+        s_pull_armed = true;
+        vibes_short_pulse();   // "let go to refresh"
+      }
+      break;
+    case TouchEvent_Liftoff:
+      if (s_pull_armed) {
+        request_fetch();
+      }
+      s_pull_active = false;
+      s_pull_armed = false;
+      break;
+  }
+}
+#endif
 
 static void window_load(Window *window) {
   Layer *root = window_get_root_layer(window);
@@ -551,9 +682,11 @@ static void window_unload(Window *window) {
   status_bar_layer_destroy(s_status_bar);
 }
 
-// Every minute: countdown values drift, so redraw, and refresh the strip.
+// Every minute: countdown values drift, so redraw, refresh the strip, and
+// pull a fresh batch once the data is old enough.
 static void tick_handler(struct tm *t, TimeUnits units) {
   update_freshness();
+  maybe_auto_refresh();
   schedule_reload();
 }
 
@@ -584,6 +717,9 @@ static void init(void) {
   // button-only watches, where the SDK stubs it to (0), so the (void) cast
   // keeps the compiler quiet. Buttons keep working everywhere.
   (void) app_touch_navigation_enable(true);
+#if defined(PBL_PLATFORM_EMERY)
+  touch_service_subscribe(touch_handler, NULL);   // pull-to-refresh
+#endif
 
   s_window = window_create();
   window_set_window_handlers(s_window, (WindowHandlers) {
@@ -594,6 +730,9 @@ static void init(void) {
 }
 
 static void deinit(void) {
+#if defined(PBL_PLATFORM_EMERY)
+  touch_service_unsubscribe();
+#endif
   tick_timer_service_unsubscribe();
   accel_tap_service_unsubscribe();
   detail_deinit();

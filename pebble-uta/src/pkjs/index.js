@@ -106,6 +106,46 @@ function sendRows(rows) {
   });
 }
 
+// Launcher glance subtext: the soonest pinned departure, as a live countdown.
+// rows are already sorted by minutes, so the first favorite is the next one.
+function updateGlance(rows) {
+  var fav = null;
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].favorite) { fav = rows[i]; break; }
+  }
+
+  if (!fav) {
+    // No pinned departure right now. Clear the glance only if the user has no
+    // favorites at all; otherwise leave the last one until it expires.
+    if (!FAV.load().length) {
+      try { Pebble.appGlanceReload([], function () {}, function () {}); }
+      catch (e) { /* older firmware */ }
+    }
+    return;
+  }
+
+  var nowS = Math.round(Date.now() / 1000);
+  var epoch = fav.dep_epoch || (nowS + (fav.minutes || 0) * 60);
+
+  var label = fav.route || 'Route';
+  if ((label + ' ' + (fav.headsign || '')).length <= 18 && fav.headsign) {
+    label += ' ' + fav.headsign;
+  }
+
+  var slice = {
+    layout: { subtitleTemplateString: label + '  {time_until(' + epoch + ')}' },
+    expirationTime: new Date((epoch + 180) * 1000).toISOString()
+  };
+  log('glance: ' + slice.layout.subtitleTemplateString);
+  try {
+    Pebble.appGlanceReload([slice], function () {}, function (e) {
+      log('glance fail: ' + JSON.stringify(e));
+    });
+  } catch (e) {
+    log('glance err: ' + e.message);
+  }
+}
+
 // Alerts get their own pinned section at the top of the watch menu.
 // COUNT rides in every message; IDX 0 tells the watch to clear.
 function sendAlerts(alerts) {
@@ -176,6 +216,7 @@ function collectDepartures(settings, lat, lon) {
     }
     sendAlerts(alerts);
     sendRows(rows);
+    updateGlance(rows);
   }
 
   function fetchFavorites() {
