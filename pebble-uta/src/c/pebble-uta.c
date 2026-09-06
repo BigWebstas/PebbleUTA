@@ -54,6 +54,8 @@ static char s_fresh_txt[40] = "";
 static bool s_have_data = false;
 static time_t s_data_time = 0;   // when the shown rows were fetched
 static bool s_offline = false;   // last refresh could not reach the proxy
+static bool s_refreshing = false;   // a pull-to-refresh is in flight
+static AppTimer *s_refresh_timer;   // safety clear for s_refreshing
 
 // Minutes until a departure: live from its epoch when known, else the
 // fetch-time value (which goes stale).
@@ -75,8 +77,13 @@ static void human_ago(int secs, char *out, size_t len) {
 }
 
 static void update_freshness(void) {
-  // While offline the pinned banner carries the state, so keep the strip clear.
-  if (!s_have_data || s_data_time == 0 || s_offline) {
+  bool bar = false;
+  if (s_refreshing) {
+    // Pull-to-refresh: a highlighted "Refreshing..." bar over the strip.
+    snprintf(s_fresh_txt, sizeof(s_fresh_txt), "%s", "Refreshing...");
+    bar = true;
+  } else if (!s_have_data || s_data_time == 0 || s_offline) {
+    // While offline the pinned banner carries the state, so keep the strip clear.
     s_fresh_txt[0] = '\0';
   } else {
     int age = (int)(time(NULL) - s_data_time);
@@ -90,7 +97,47 @@ static void update_freshness(void) {
   }
   if (s_fresh) {
     text_layer_set_text(s_fresh, s_fresh_txt);
+#if defined(PBL_COLOR)
+    text_layer_set_background_color(s_fresh, bar ? GColorPictonBlue : GColorClear);
+    text_layer_set_text_color(s_fresh, bar ? GColorBlack : GColorDarkGray);
+#else
+    text_layer_set_background_color(s_fresh, bar ? GColorBlack : GColorClear);
+    text_layer_set_text_color(s_fresh, bar ? GColorWhite : GColorBlack);
+#endif
   }
+}
+
+static void refresh_ui_end(void);
+
+#if defined(PBL_PLATFORM_EMERY)
+static void refresh_timeout(void *ctx) {
+  s_refresh_timer = NULL;
+  refresh_ui_end();
+}
+
+// Show the "Refreshing..." bar (pull-to-refresh only); a safety timer clears
+// it if the phone stays quiet.
+static void refresh_ui_begin(void) {
+  s_refreshing = true;
+  update_freshness();
+  if (s_refresh_timer) {
+    app_timer_reschedule(s_refresh_timer, 12000);
+  } else {
+    s_refresh_timer = app_timer_register(12000, refresh_timeout, NULL);
+  }
+}
+#endif
+
+static void refresh_ui_end(void) {
+  if (!s_refreshing) {
+    return;
+  }
+  s_refreshing = false;
+  if (s_refresh_timer) {
+    app_timer_cancel(s_refresh_timer);
+    s_refresh_timer = NULL;
+  }
+  update_freshness();
 }
 
 // ---------------------------------------------------------------------------
@@ -218,12 +265,14 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
     if (strstr(s_status, "unreachable") || strstr(s_status, "timeout") ||
         strstr(s_status, "starting up")) {
       s_offline = true;   // keep the cached rows on screen, just flag them
+      refresh_ui_end();
     } else if (strstr(s_status, "No departures")) {
       // The proxy answered; there is simply nothing to show.
       s_offline = false;
       departures_clear();
       s_data_time = time(NULL);
       cache_save();
+      refresh_ui_end();
     }
 
     // Keep existing rows visible during a refresh; a real batch replaces them
@@ -273,6 +322,7 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
     s_data_time = time(NULL);
     s_offline = false;
     cache_save();
+    refresh_ui_end();
     update_freshness();
   }
   schedule_reload();
@@ -620,7 +670,8 @@ static void touch_handler(const TouchEvent *e, void *ctx) {
       break;
     case TouchEvent_Liftoff:
       if (s_pull_armed) {
-        request_fetch();
+        refresh_ui_begin();   // "Refreshing..." bar; the vibe already fired
+        do_fetch(true);       // quiet: keep the rows on screen
       }
       s_pull_active = false;
       s_pull_armed = false;
@@ -677,6 +728,11 @@ static void window_unload(Window *window) {
     app_timer_cancel(s_reload_timer);
     s_reload_timer = NULL;
   }
+  if (s_refresh_timer) {
+    app_timer_cancel(s_refresh_timer);
+    s_refresh_timer = NULL;
+  }
+  s_refreshing = false;
   menu_layer_destroy(s_menu);
   s_menu = NULL;
   text_layer_destroy(s_fresh);
