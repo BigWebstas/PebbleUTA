@@ -19,6 +19,9 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 // Runs as a Windows Service when SCM started the process; no-op otherwise.
 builder.Services.AddWindowsService(o => o.ServiceName = "PebbleUTA Proxy");
 
+// Daily-rotated file log + optional syslog forwarding (Logging:File / Logging:Syslog).
+builder.Logging.AddPebbleUtaSinks(builder.Configuration);
+
 builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJson.Default));
 

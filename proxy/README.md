@@ -135,6 +135,48 @@ prefix (double underscore), or (IIS) `<environmentVariable>` in `web.config`.
 | `MaxDeparturesPerStop` | 6 | |
 | `WindowMinutes` | 90 | |
 
+## Logging
+
+The service always logs to the Windows Application event log (when run as a
+service) and the console. Two extra sinks are configured under `Logging` in
+`appsettings.json`:
+
+```json
+"Logging": {
+  "LogLevel": { "Default": "Information", "System.Net.Http.HttpClient": "Warning" },
+  "File": {
+    "Enabled": true,
+    "Directory": "logs",
+    "RetainedDays": 14,
+    "FilePrefix": "proxy-"
+  },
+  "Syslog": {
+    "Enabled": false,
+    "Host": "",
+    "Port": 514,
+    "Protocol": "Udp",
+    "Format": "Rfc5424",
+    "Facility": 16,
+    "AppName": "PebbleUtaProxy"
+  }
+}
+```
+
+| Key | Default | Notes |
+|---|---|---|
+| `File:Enabled` | `true` | one file per day, `proxy-YYYY-MM-DD.log` |
+| `File:Directory` | `logs` | relative paths are resolved next to the exe |
+| `File:RetainedDays` | `14` | older files are deleted on start and at each midnight rollover; `0` keeps them all |
+| `Syslog:Enabled` | `false` | forward every line to a syslog server |
+| `Syslog:Host` / `Syslog:Port` | `""` / `514` | server IP address or host name, and port |
+| `Syslog:Protocol` | `Udp` | `Udp` or `Tcp` (TCP uses RFC 6587 LF framing) |
+| `Syslog:Format` | `Rfc5424` | `Rfc5424` or `Rfc3164` |
+| `Syslog:Facility` | `16` | 16 = `local0` |
+
+Both sinks share one background thread, so request handling never blocks on
+disk or the network; if the syslog server is unreachable, lines for that
+window are dropped and the connection is retried.
+
 ## Verify without deploying
 
 ```powershell
