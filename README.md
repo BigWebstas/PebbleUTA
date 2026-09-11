@@ -19,7 +19,9 @@ by stop ID, so "what's next at my stop" requires joining against
 run on the phone, so the proxy holds UTA's schedule in memory and answers
 small, per-stop queries instead. No UTA API key or account is needed — the
 feeds are public.
-### A Proxy will be permanently hosted at https://uta.webstas.net for your conveinience.
+
+A proxy is permanently hosted at `https://uta.webstas.net` for your
+convenience.
 
 ## Layout
 
