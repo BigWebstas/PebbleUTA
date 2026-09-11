@@ -5,8 +5,7 @@
 var DEFAULTS = {
   radius: 800,    // metres (the proxy's unit); the page shows it as miles
   window_min: 120,
-  walk_pace: 80,  // metres per minute used to estimate walk time to a stop
-  test_loc: ''    // "lat, lon" to override GPS; blank = use the phone's GPS
+  walk_pace: 80   // metres per minute used to estimate walk time to a stop
 };
 
 function readSettings() {
@@ -67,24 +66,19 @@ function page(settings) {
 '<option value="100">Brisk (3.7 mph)</option>' +
 '<option value="120">Fast (4.5 mph)</option></select>' +
 '<p class="hint">Used to turn distance into the "walk N" time on each row.</p>' +
-'<label for="test_loc">Location override</label>' +
-'<input id="test_loc" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="40.766, -111.891">' +
-'<p class="hint">"lat, lon" to look at another place. Blank uses the phone GPS.</p>' +
 '<button id="save">Save</button>' +
 '<script>' +
 'var S=' + s + ';' +
 'document.getElementById("radius").value=String(S.radius||800);' +
 'document.getElementById("window_min").value=String(S.window_min||90);' +
 'document.getElementById("walk_pace").value=String(S.walk_pace||80);' +
-'document.getElementById("test_loc").value=S.test_loc||"";' +
 'function qp(n){var m=location.href.match(new RegExp("[?&]"+n+"=([^&#]*)"));' +
 'return m?decodeURIComponent(m[1]):null;}' +
 'var RT=qp("return_to")||"pebblejs://close#";' +
 'document.getElementById("save").addEventListener("click",function(){' +
 'var out={radius:Number(document.getElementById("radius").value),' +
 'window_min:Number(document.getElementById("window_min").value),' +
-'walk_pace:Number(document.getElementById("walk_pace").value),' +
-'test_loc:document.getElementById("test_loc").value.trim()};' +
+'walk_pace:Number(document.getElementById("walk_pace").value)};' +
 'location.href=RT+encodeURIComponent(JSON.stringify(out));});' +
 '</script></body></html>';
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html);

@@ -293,18 +293,6 @@ function fetchAndSend(force) {
   var settings = CFG.readSettings();
   busy = true;
 
-  // Location override from settings ("lat, lon"); blank -> use GPS.
-  if (settings.test_loc && settings.test_loc.indexOf(',') > 0) {
-    var p = settings.test_loc.split(',');
-    var olat = parseFloat(p[0]), olon = parseFloat(p[1]);
-    if (isFinite(olat) && isFinite(olon)) {
-      log('location override ' + olat + ',' + olon);
-      sendStatus('Finding stops...');
-      collectDepartures(settings, olat, olon);
-      return;
-    }
-  }
-
   sendStatus('Locating...');
 
   navigator.geolocation.getCurrentPosition(
